@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/common.sh"
+
+require_root
+
+if ! command -v whiptail >/dev/null 2>&1; then
+  emerge --ask dev-libs/newt || die "whiptail is required"
+fi
+
+set_root_password() {
+  passwd root
+}
+
+add_user() {
+  local name
+  name="$(input "User account" "Username for the new account." "")" || return 0
+  [ -n "$name" ] || return 0
+  useradd -m -G wheel -s /bin/bash "$name"
+  passwd "$name"
+}
+
+set_hostname() {
+  local name
+  name="$(input "Hostname" "Hostname for this machine." "strata")" || return 0
+  [ -n "$name" ] || return 0
+  printf '%s\n' "$name" > /etc/hostname
+  printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$name" > /etc/hosts
+}
+
+set_timezone() {
+  local zone
+  zone="$(menu "Timezone" "Select the system timezone." \
+    UTC "UTC" \
+    Europe/Moscow "Moscow" \
+    Europe/London "London" \
+    Europe/Berlin "Berlin" \
+    America/New_York "New York" \
+    America/Los_Angeles "Los Angeles" \
+    Asia/Tokyo "Tokyo")" || return 0
+  [ -n "$zone" ] || return 0
+  ln -sf "/usr/share/zoneinfo/$zone" /etc/localtime
+  hwclock --systohc || true
+}
+
+set_locale() {
+  local locale
+  locale="$(input "Locale" "Locale line for /etc/locale.gen." "en_US.UTF-8 UTF-8")" || return 0
+  [ -n "$locale" ] || return 0
+  printf '%s\n' "$locale" > /etc/locale.gen
+  locale-gen
+}
+
+sync_repo() {
+  emerge --sync
+}
+
+build_kernel() {
+  emerge --ask sys-kernel/gentoo-sources || return 0
+  cd /usr/src/linux || die "/usr/src/linux not found"
+  make menuconfig
+  make -j"$(nproc)"
+  make modules_install
+  make install
+  cd / || true
+}
+
+write_fstab() {
+  local root efi swap
+  root="$(findmnt -n -o SOURCE /)"
+  efi="$(findmnt -n -o SOURCE /efi 2>/dev/null || true)"
+  swap="$(swapon --show=NAME --noheadings 2>/dev/null | head -n1 | awk '{print $1}')"
+  {
+    printf '%s / ext4 defaults,noatime 0 1\n' "$root"
+    [ -n "$efi" ] && printf '%s /efi vfat umask=0077 0 2\n' "$efi"
+    [ -n "$swap" ] && printf '%s none swap sw 0 0\n' "$swap"
+  } > /etc/fstab
+  msg "/etc/fstab" "$(cat /etc/fstab)"
+}
+
+install_bootloader() {
+  emerge --ask sys-boot/grub || return 0
+  grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=STRATA
+  grub-mkconfig -o /boot/grub/grub.cfg
+}
+
+setup_network() {
+  emerge --ask net-misc/dhcpcd || return 0
+  rc-update add dhcpcd default
+}
+
+show_next_steps() {
+  msg "Next steps" "Exit the chroot, then unmount:
+
+  exit
+  umount -R /mnt/strata
+  reboot
+
+Step is still under development. This bootstrap install uses Portage;
+Strata will move to Step once the resolver and merge engine land."
+}
+
+while true; do
+  choice="$(menu "Strata setup" "Configure the new system." \
+    sync "Sync the ebuild repository" \
+    profile "Select a system profile" \
+    rootpw "Set the root password" \
+    user "Create a user account" \
+    hostname "Set the hostname" \
+    timezone "Set the timezone" \
+    locale "Generate locales" \
+    kernel "Build a kernel" \
+    fstab "Generate /etc/fstab" \
+    bootloader "Install GRUB" \
+    network "Enable DHCP networking" \
+    done "Finish")" || break
+
+  case "$choice" in
+    sync) sync_repo ;;
+    profile) eselect profile list && eselect profile set ;;
+    rootpw) set_root_password ;;
+    user) add_user ;;
+    hostname) set_hostname ;;
+    timezone) set_timezone ;;
+    locale) set_locale ;;
+    kernel) build_kernel ;;
+    fstab) write_fstab ;;
+    bootloader) install_bootloader ;;
+    network) setup_network ;;
+    done) show_next_steps; break ;;
+  esac
+done

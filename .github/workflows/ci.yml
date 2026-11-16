@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: make clean && make CXXFLAGS="-std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror"
+      - name: test
+        run: make test
+      - name: shell syntax
+        run: |
+          bash -n installer/common.sh
+          bash -n installer/strata-guide
+          bash -n installer/setup-disks
+          bash -n installer/setup-mounts
+          bash -n installer/setup-tar
+          bash -n installer/strata-chroot
+          bash -n installer/strata-setup
+          bash -n config/kernel/apply.sh

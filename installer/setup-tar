@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/common.sh"
+
+require_root
+require_tool whiptail
+require_tool curl
+require_tool tar
+require_tool sha256sum
+require_tool mountpoint
+
+mountpoint -q "$TARGET_MNT" || die "$TARGET_MNT is not mounted; run setup-mounts first"
+
+if [ -n "$(ls -A "$TARGET_MNT" 2>/dev/null)" ]; then
+  ask "Non-empty target" "$TARGET_MNT is not empty. Extract the base system anyway?" || exit 0
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+listing="$(curl -fsSL "$STAGE3_BASE/")" || die "cannot reach $STAGE3_BASE"
+file="$(grep -oE 'stage3-amd64-openrc-[0-9TZ]+\.tar\.xz' <<<"$listing" | sort -u | tail -n1)"
+[ -n "$file" ] || die "no stage3 tarball found"
+
+msg "Base system" "Downloading $file
+
+This is Gentoo's OpenRC stage3 used to bootstrap Strata until Strata publishes its own stages."
+
+curl -fL "$STAGE3_BASE/$file" -o "$tmp/$file"
+curl -fsSL "$STAGE3_BASE/$file.sha256" -o "$tmp/$file.sha256"
+(cd "$tmp" && sha256sum -c "$file.sha256")
+
+tar -xpf "$tmp/$file" -C "$TARGET_MNT" --xattrs-include='*.*' --numeric-owner
+cp -L /etc/resolv.conf "$TARGET_MNT/etc/resolv.conf"
+
+msg "Base system ready" "Extracted $file into $TARGET_MNT.
+
+Next: strata-chroot"

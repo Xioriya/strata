@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/common.sh"
+
+require_root
+require_tool whiptail
+require_tool lsblk
+require_tool sgdisk
+require_tool mkfs.fat
+require_tool mkfs.ext4
+require_tool mkswap
+
+mapfile -t disks < <(list_disks)
+[ "${#disks[@]}" -gt 0 ] || die "no disks found"
+
+entries=()
+for line in "${disks[@]}"; do
+  name="$(awk '{print $1}' <<<"$line")"
+  rest="$(cut -d' ' -f2- <<<"$line")"
+  entries+=("$name" "$rest")
+done
+
+disk="$(menu "Strata installer" "Select the disk to erase and partition. All data on it will be destroyed." "${entries[@]}")"
+[ -n "${disk:-}" ] || exit 0
+
+ask "Confirm erase" "Erase $disk and create EFI, swap, and root partitions?" || exit 0
+
+mode="$(menu "Partitioning" "Choose how to partition $disk." \
+  automatic "Automatic GPT: 1 GiB EFI, 4 GiB swap, rest root" \
+  manual "Open cfdisk and partition manually")"
+[ -n "${mode:-}" ] || exit 0
+
+wipefs -a "$disk"
+sgdisk --zap-all "$disk"
+
+if [ "$mode" = "manual" ]; then
+  cfdisk "$disk"
+  msg "Manual partitioning" "Create your partitions with cfdisk and continue with setup-mounts."
+  exit 0
+fi
+
+sgdisk --new=1:0:+1G --typecode=1:ef00 --change-name=1:STRATA-EFI "$disk"
+sgdisk --new=2:0:+4G --typecode=2:8200 --change-name=2:STRATA-SWAP "$disk"
+sgdisk --new=3:0:0 --typecode=3:8300 --change-name=3:STRATA-ROOT "$disk"
+partprobe "$disk" || true
+sleep 1
+
+efi="$(part_path "$disk" 1)"
+swap="$(part_path "$disk" 2)"
+root="$(part_path "$disk" 3)"
+
+mkfs.fat -F32 -n STRATA-EFI "$efi"
+mkswap -L STRATA-SWAP "$swap"
+mkfs.ext4 -F -L STRATA-ROOT "$root"
+
+msg "Partitions ready" "Created and formatted:
+$efi  EFI
+$swap  swap
+$root  root
+
+Next: setup-mounts"

@@ -1,0 +1,4 @@
+step/step
+step/src/*.o
+*.o
+.DS_Store

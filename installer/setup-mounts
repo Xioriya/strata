@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/common.sh"
+
+require_root
+require_tool whiptail
+require_tool lsblk
+require_tool blkid
+require_tool mountpoint
+
+root_dev="$(blkid -L STRATA-ROOT 2>/dev/null || true)"
+efi_dev="$(blkid -L STRATA-EFI 2>/dev/null || true)"
+swap_dev="$(blkid -L STRATA-SWAP 2>/dev/null || true)"
+
+[ -n "$root_dev" ] || root_dev="$(select_partition "Root partition")"
+[ -n "${root_dev:-}" ] || exit 0
+[ -n "$efi_dev" ] || efi_dev="$(select_partition "EFI partition")"
+[ -n "${efi_dev:-}" ] || exit 0
+if [ -z "$swap_dev" ]; then
+  swap_dev="$(select_partition "Swap partition")"
+fi
+
+ask "Confirm mounts" "Root: $root_dev
+EFI:  $efi_dev
+Swap: ${swap_dev:-none}
+
+Mount into $TARGET_MNT?" || exit 0
+
+mkdir -p "$TARGET_MNT"
+mount "$root_dev" "$TARGET_MNT"
+mkdir -p "$TARGET_MNT/efi"
+mount "$efi_dev" "$TARGET_MNT/efi"
+if [ -n "${swap_dev:-}" ]; then
+  swapon "$swap_dev"
+fi
+
+msg "Mounted" "Root and EFI are mounted at $TARGET_MNT. Swap is active.
+
+Next: setup-tar"

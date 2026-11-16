@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/common.sh"
+
+require_root
+require_tool whiptail
+require_tool mountpoint
+
+mountpoint -q "$TARGET_MNT" || die "$TARGET_MNT is not mounted; run setup-mounts first"
+
+cp -L /etc/resolv.conf "$TARGET_MNT/etc/resolv.conf"
+
+mount --rbind /dev "$TARGET_MNT/dev"
+mount --make-rslave "$TARGET_MNT/dev"
+mount -t proc /proc "$TARGET_MNT/proc"
+mount --rbind /sys "$TARGET_MNT/sys"
+mount --make-rslave "$TARGET_MNT/sys"
+mount --rbind /run "$TARGET_MNT/run"
+mount --make-rslave "$TARGET_MNT/run"
+
+if [ -d /sys/firmware/efi/efivars ]; then
+  mount --rbind /sys/firmware/efi/efivars "$TARGET_MNT/sys/firmware/efi/efivars" || true
+fi
+
+msg "Entering chroot" "You are entering the Strata chroot.
+
+Run strata-setup to configure the system.
+When finished, exit the shell and unmount with:
+
+  umount -R $TARGET_MNT"
+
+chroot "$TARGET_MNT" /usr/bin/env -i \
+  HOME=/root \
+  TERM="${TERM:-xterm}" \
+  PS1='(strata) \u@\h:\w\$ ' \
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  /bin/bash -l
